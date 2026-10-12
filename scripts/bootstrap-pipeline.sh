@@ -17,13 +17,29 @@ REGION="${REGION:-eu-central-1}"
 GITHUB_ORG="${GITHUB_ORG:-Eric-Obeng}"
 GITHUB_REPO="${GITHUB_REPO:-dynamodb-sam-lab}"
 
+# On Windows (Git Bash) the SAM CLI installer only provides sam.cmd.
+if command -v sam >/dev/null 2>&1; then SAM=sam; else SAM=sam.cmd; fi
+
+# --cicd-provider is required alongside --oidc-provider: when it is omitted,
+# SAM CLI resets the OIDC provider to None and fails with
+# "Missing required parameter '--oidc-provider'".
+#
+# SAM CLI also saves deployment_branch into [default] of pipelineconfig.toml
+# and, on the next run, lets that saved value OVERRIDE --deployment-branch.
+# Without the sed below, the prod role would trust "develop" instead of "main".
+PIPELINE_CONFIG=".aws-sam/pipeline/pipelineconfig.toml"
+
 bootstrap_stage() {
   local stage="$1" branch="$2"
-  sam pipeline bootstrap \
+  if [[ -f "$PIPELINE_CONFIG" ]]; then
+    sed -i "s|^deployment_branch = .*|deployment_branch = \"$branch\"|" "$PIPELINE_CONFIG"
+  fi
+  "$SAM" pipeline bootstrap \
     --no-interactive \
     --stage "$stage" \
     --region "$REGION" \
     --permissions-provider oidc \
+    --cicd-provider github-actions \
     --oidc-provider github-actions \
     --oidc-provider-url https://token.actions.githubusercontent.com \
     --oidc-client-id sts.amazonaws.com \

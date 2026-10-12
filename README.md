@@ -131,8 +131,50 @@ the GitHub CLI, and admin credentials for the target account.
    | `DEV_CLOUDFORMATION_EXECUTION_ROLE` / `PROD_…`  | `cloudformation_execution_role` |
    | `DEV_ARTIFACTS_BUCKET` / `PROD_…`               | `artifacts_bucket`              |
 
-3. Commit `.aws-sam/pipeline/pipelineconfig.toml` and push to `develop`. That deploys dev.
+   Or set them from the file with the GitHub CLI:
+
+   ```bash
+   CFG=.aws-sam/pipeline/pipelineconfig.toml
+   get() { sed -n "/^\[$1\.pipeline_bootstrap/,/^\[/p" $CFG | grep "^$2 =" | cut -d'"' -f2; }
+   for s in dev prod; do
+     P=$(echo $s | tr a-z A-Z)
+     gh variable set ${P}_REGION                        --body "$(get $s region)"
+     gh variable set ${P}_PIPELINE_EXECUTION_ROLE       --body "$(get $s pipeline_execution_role)"
+     gh variable set ${P}_CLOUDFORMATION_EXECUTION_ROLE --body "$(get $s cloudformation_execution_role)"
+     gh variable set ${P}_ARTIFACTS_BUCKET              --body "$(get $s artifacts_bucket)"
+   done
+   ```
+
+3. Check that each stage's role trusts only its own branch:
+
+   ```bash
+   for s in dev prod; do
+     ROLE=$(aws cloudformation describe-stack-resource \
+       --stack-name aws-sam-cli-managed-$s-pipeline-resources \
+       --logical-resource-id PipelineExecutionRole \
+       --query StackResourceDetail.PhysicalResourceId --output text)
+     echo "== $s: $(aws iam get-role --role-name "$ROLE" \
+       --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.*."token.actions.githubusercontent.com:sub"' --output text)"
+   done
+   # == dev: repo:Eric-Obeng/dynamodb-sam-lab:ref:refs/heads/develop
+   # == prod: repo:Eric-Obeng/dynamodb-sam-lab:ref:refs/heads/main
+   ```
+
+4. Commit `.aws-sam/pipeline/pipelineconfig.toml` and push to `develop`. That deploys dev.
    Open a PR from `develop` to `main` and merge it. That deploys prod.
+
+### SAM CLI quirks (handled in `scripts/bootstrap-pipeline.sh`)
+
+Found with SAM CLI 1.168.0:
+
+- **`--cicd-provider` is required with `--oidc-provider`.** Without it, SAM resets the OIDC
+  provider to nothing and fails with `Missing required parameter '--oidc-provider'`.
+- **A saved `deployment_branch` overrides the command line.** The first stage's branch is saved
+  under `[default]` in `pipelineconfig.toml`, and SAM reuses it for the next stage even when
+  `--deployment-branch` is passed. Without a fix, the prod role would trust `develop`. The script
+  resets the saved branch before each stage, and step 3 above checks the result.
+- **On Windows (Git Bash)** the SAM installer only provides `sam.cmd`. The script uses it when
+  `sam` isn't on the path.
 
 ### Local checks
 
