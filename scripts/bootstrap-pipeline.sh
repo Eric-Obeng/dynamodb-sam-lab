@@ -17,6 +17,20 @@ REGION="${REGION:-eu-central-1}"
 GITHUB_ORG="${GITHUB_ORG:-Eric-Obeng}"
 GITHUB_REPO="${GITHUB_REPO:-dynamodb-sam-lab}"
 
+# Newer GitHub repos use "immutable" OIDC subjects that embed numeric IDs:
+#   repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:refs/heads/<branch>
+# SAM CLI only builds the name-only form, so feed it "<owner>@<id>" and
+# "<repo>@<id>" as org/repo when the repo uses immutable subjects. Without
+# this, sts:AssumeRoleWithWebIdentity is denied.
+SUB_PREFIX=$(gh api "repos/$GITHUB_ORG/$GITHUB_REPO/actions/oidc/customization/sub" \
+  -q 'select(.use_immutable_subject) | .sub_claim_prefix' 2>/dev/null || true)
+if [[ -n "$SUB_PREFIX" ]]; then
+  owner_repo="${SUB_PREFIX#repo:}"          # Eric-Obeng@61484602/dynamodb-sam-lab@1415454330
+  GITHUB_ORG="${owner_repo%%/*}"
+  GITHUB_REPO="${owner_repo#*/}"
+  echo "Using immutable OIDC subject: $SUB_PREFIX"
+fi
+
 # On Windows (Git Bash) the SAM CLI installer only provides sam.cmd.
 if command -v sam >/dev/null 2>&1; then SAM=sam; else SAM=sam.cmd; fi
 

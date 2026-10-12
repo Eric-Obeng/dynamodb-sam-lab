@@ -156,8 +156,8 @@ the GitHub CLI, and admin credentials for the target account.
      echo "== $s: $(aws iam get-role --role-name "$ROLE" \
        --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.*."token.actions.githubusercontent.com:sub"' --output text)"
    done
-   # == dev: repo:Eric-Obeng/dynamodb-sam-lab:ref:refs/heads/develop
-   # == prod: repo:Eric-Obeng/dynamodb-sam-lab:ref:refs/heads/main
+   # == dev: repo:Eric-Obeng@61484602/dynamodb-sam-lab@1415454330:ref:refs/heads/develop
+   # == prod: repo:Eric-Obeng@61484602/dynamodb-sam-lab@1415454330:ref:refs/heads/main
    ```
 
 4. Commit `.aws-sam/pipeline/pipelineconfig.toml` and push to `develop`. That deploys dev.
@@ -173,6 +173,12 @@ Found with SAM CLI 1.168.0:
   under `[default]` in `pipelineconfig.toml`, and SAM reuses it for the next stage even when
   `--deployment-branch` is passed. Without a fix, the prod role would trust `develop`. The script
   resets the saved branch before each stage, and step 3 above checks the result.
+- **SAM doesn't know GitHub's immutable OIDC subjects.** This repo's tokens carry
+  `repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:…`, but SAM writes a name-only trust
+  (`repo:<owner>/<repo>:ref:…`), so `AssumeRoleWithWebIdentity` is denied. The script reads
+  the repo's subject prefix with `gh api` and passes the ID form as `--github-org` /
+  `--github-repo`. Matching on IDs is also safer: a deleted or renamed repo can't be
+  recreated under the same name to gain the role.
 - **On Windows (Git Bash)** the SAM installer only provides `sam.cmd`. The script uses it when
   `sam` isn't on the path.
 
