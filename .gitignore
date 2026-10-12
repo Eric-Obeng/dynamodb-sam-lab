@@ -1,0 +1,9 @@
+.idea/
+.vscode/
+*.log
+__pycache__/
+LAB_BRIEF.md
+# Build output - but keep the pipeline bootstrap config, which sam
+# pipeline bootstrap writes here and is meant to be committed.
+.aws-sam/*
+!.aws-sam/pipeline/

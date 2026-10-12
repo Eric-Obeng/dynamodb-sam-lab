@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: '2010-09-09'
+# LanguageExtensions must come first: it is what allows Fn::If inside
+# DeletionPolicy / UpdateReplacePolicy on the table below.
+Transform:
+  - AWS::LanguageExtensions
+  - AWS::Serverless-2016-10-31
+Description: >
+  DynamoDB SAM lab - a single Tasks table with a primary key, named
+  non-key attributes and two Global Secondary Indexes. Deployed once per
+  environment (dev / prod) by the matching GitHub Actions workflow.
+
+# AWS::Serverless::SimpleTable is not used on purpose: it supports neither
+# GSIs, a sort key, nor TableClass, so the full AWS::DynamoDB::Table
+# resource is declared instead (still valid inside a SAM template).
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+    Description: Deployment environment, used for naming and prod-only protections.
+
+  ProjectName:
+    Type: String
+    Default: dynamodb-sam-lab
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+
+Resources:
+  ##############################################################
+  # Tasks table
+  #
+  # Item shape (only key attributes need AttributeDefinitions -
+  # DynamoDB is schemaless for everything else):
+  #   taskId    (S)  - partition key
+  #   status    (S)  - TODO | IN_PROGRESS | DONE      -> StatusIndex PK
+  #   assignee  (S)  - owner of the task              -> AssigneeIndex PK
+  #   dueDate   (S)  - ISO-8601 date, e.g. 2026-10-31 -> StatusIndex SK
+  #   createdAt (S)  - ISO-8601 timestamp             -> AssigneeIndex SK
+  #   title     (S)  - free text, non-indexed
+  #   priority  (S)  - LOW | MEDIUM | HIGH, non-indexed
+  ##############################################################
+  TasksTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
+    Properties:
+      TableName: !Sub ${ProjectName}-${Environment}-tasks
+      BillingMode: PAY_PER_REQUEST
+      # Non-default storage class (the default is STANDARD).
+      TableClass: STANDARD_INFREQUENT_ACCESS
+      DeletionProtectionEnabled: !If [IsProd, true, false]
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProd, true, false]
+      SSESpecification:
+        SSEEnabled: true
+      AttributeDefinitions:
+        - AttributeName: taskId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: dueDate
+          AttributeType: S
+        - AttributeName: assignee
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: taskId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        # "All tasks with status X, ordered by due date"
+        - IndexName: StatusIndex
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: dueDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        # "All tasks assigned to Y, newest first"
+        - IndexName: AssigneeIndex
+          KeySchema:
+            - AttributeName: assignee
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  TasksTableName:
+    Description: Name of the Tasks table
+    Value: !Ref TasksTable
+
+  TasksTableArn:
+    Description: ARN of the Tasks table
+    Value: !GetAtt TasksTable.Arn

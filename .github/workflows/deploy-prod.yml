@@ -1,0 +1,82 @@
+name: Deploy (prod)
+
+# Deploys ONLY the prod stack, through the prod-specific pipeline role and
+# artifacts bucket created by `sam pipeline bootstrap --stage prod`.
+# Stack name, region and parameters come from [prod.*] in samconfig.toml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "template.yaml"
+      - "samconfig.toml"
+      - ".github/workflows/deploy-prod.yml"
+  workflow_dispatch:
+
+# Only one prod deployment at a time; queue rather than cancel so a
+# CloudFormation update is never interrupted mid-flight.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+# Least privilege by default; only the deploy job may request an OIDC token.
+permissions:
+  contents: read
+
+env:
+  SAM_CONFIG_ENV: prod
+  SAM_CLI_TELEMETRY: "0"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Validate and lint template
+        run: sam validate --config-env "$SAM_CONFIG_ENV"
+
+  # NOTE: no `environment:` key on this job on purpose - setting one changes
+  # the OIDC sub claim to "repo:<org>/<repo>:environment:<name>", which would
+  # no longer match the branch-scoped trust policy sam pipeline bootstrap
+  # creates ("repo:<org>/<repo>:ref:refs/heads/main").
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.PROD_PIPELINE_EXECUTION_ROLE }}
+          role-session-name: prod-deployment-${{ github.run_id }}
+          aws-region: ${{ vars.PROD_REGION }}
+
+      - name: Build
+        run: sam build --config-env "$SAM_CONFIG_ENV"
+
+      - name: Deploy
+        env:
+          ARTIFACTS_BUCKET: ${{ vars.PROD_ARTIFACTS_BUCKET }}
+          CLOUDFORMATION_EXECUTION_ROLE: ${{ vars.PROD_CLOUDFORMATION_EXECUTION_ROLE }}
+        run: |
+          sam deploy \
+            --config-env "$SAM_CONFIG_ENV" \
+            --s3-bucket "$ARTIFACTS_BUCKET" \
+            --role-arn "$CLOUDFORMATION_EXECUTION_ROLE" \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset
+
+      - name: Show stack outputs
+        run: sam list stack-outputs --config-env "$SAM_CONFIG_ENV" --output table

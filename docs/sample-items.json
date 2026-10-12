@@ -1,0 +1,29 @@
+[
+  {
+    "taskId": { "S": "task-001" },
+    "title": { "S": "Write SAM template" },
+    "status": { "S": "DONE" },
+    "priority": { "S": "HIGH" },
+    "assignee": { "S": "eric" },
+    "dueDate": { "S": "2026-10-14" },
+    "createdAt": { "S": "2026-10-12T09:00:00Z" }
+  },
+  {
+    "taskId": { "S": "task-002" },
+    "title": { "S": "Bootstrap SAM pipeline stages" },
+    "status": { "S": "IN_PROGRESS" },
+    "priority": { "S": "HIGH" },
+    "assignee": { "S": "eric" },
+    "dueDate": { "S": "2026-10-15" },
+    "createdAt": { "S": "2026-10-12T10:30:00Z" }
+  },
+  {
+    "taskId": { "S": "task-003" },
+    "title": { "S": "Record console CRUD demo" },
+    "status": { "S": "TODO" },
+    "priority": { "S": "MEDIUM" },
+    "assignee": { "S": "ama" },
+    "dueDate": { "S": "2026-10-18" },
+    "createdAt": { "S": "2026-10-12T11:15:00Z" }
+  }
+]

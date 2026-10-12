@@ -1,0 +1,61 @@
+# SAM CLI config, one self-contained block per environment.
+#
+# Every block is complete on purpose: with --config-env dev|prod, SAM CLI
+# does NOT fall back to [default.*] sections.
+#
+# stack_name lives in global.parameters so every command (deploy, list
+# stack-outputs, delete) picks it up without repeating it.
+#
+# s3_bucket and role_arn are intentionally NOT set here: they are outputs
+# of `sam pipeline bootstrap` (see scripts/bootstrap-pipeline.sh) and are
+# passed in by each GitHub Actions workflow from repo variables, so each
+# environment deploys through its own dedicated artifacts bucket.
+#
+# capabilities: the template creates no IAM resources, so CAPABILITY_IAM is
+# not granted. CAPABILITY_AUTO_EXPAND is required by the
+# AWS::LanguageExtensions transform.
+version = 0.1
+
+########################################
+# dev
+########################################
+[dev.global.parameters]
+stack_name = "dynamodb-sam-lab-dev"
+region = "eu-central-1"
+
+[dev.validate.parameters]
+lint = true
+
+[dev.build.parameters]
+cached = true
+parallel = true
+
+[dev.deploy.parameters]
+s3_prefix = "dynamodb-sam-lab-dev"
+capabilities = "CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=dev"
+confirm_changeset = false
+fail_on_empty_changeset = false
+tags = "Project=dynamodb-sam-lab Environment=dev"
+
+########################################
+# prod
+########################################
+[prod.global.parameters]
+stack_name = "dynamodb-sam-lab-prod"
+region = "eu-central-1"
+
+[prod.validate.parameters]
+lint = true
+
+[prod.build.parameters]
+cached = true
+parallel = true
+
+[prod.deploy.parameters]
+s3_prefix = "dynamodb-sam-lab-prod"
+capabilities = "CAPABILITY_AUTO_EXPAND"
+parameter_overrides = "Environment=prod"
+confirm_changeset = false
+fail_on_empty_changeset = false
+tags = "Project=dynamodb-sam-lab Environment=prod"
