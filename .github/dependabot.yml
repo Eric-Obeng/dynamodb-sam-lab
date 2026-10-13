@@ -1,0 +1,9 @@
+# Actions are pinned to commit SHAs; Dependabot opens PRs to bump the SHA
+# (and its version comment) when new releases come out.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly

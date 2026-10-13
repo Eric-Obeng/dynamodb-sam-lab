@@ -1,0 +1,36 @@
+name: Validate (PR)
+
+# Runs on every pull request so template problems are caught before merge,
+# not after a deploy has started. Needs no AWS access. The job name
+# "validate-pr" is the status check required by branch protection on main.
+on:
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+env:
+  SAM_CLI_TELEMETRY: "0"
+
+jobs:
+  validate-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: aws-actions/setup-sam@f84ec7d548307efafe33230528756de3c5841a17 # v2
+        with:
+          use-installer: true
+
+      - name: Validate and lint template (dev config)
+        run: sam validate --config-env dev
+
+      - name: Validate and lint template (prod config)
+        run: sam validate --config-env prod
+
+      - name: Build (dev config)
+        run: sam build --config-env dev
+
+      - name: Lint pipeline role template
+        run: pipx run cfn-lint pipeline/cfn-execution-role.yaml
