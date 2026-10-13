@@ -7,6 +7,10 @@
 #   - artifacts S3 bucket          -> <STAGE>_ARTIFACTS_BUCKET
 #   - pipeline execution role      -> <STAGE>_PIPELINE_EXECUTION_ROLE (assumed via GitHub OIDC)
 #   - CloudFormation execution role-> <STAGE>_CLOUDFORMATION_EXECUTION_ROLE
+#     (our least-privilege role from pipeline/cfn-execution-role.yaml,
+#      deployed first as stack dynamodb-sam-lab-<stage>-cfn-execution-role)
+#
+# Safe to re-run: every step updates the existing stacks in place.
 #
 # Each stage's OIDC trust is pinned to its own branch (dev -> develop,
 # prod -> main), so the dev workflow can never assume the prod role.
@@ -43,8 +47,30 @@ if command -v sam >/dev/null 2>&1; then SAM=sam; else SAM=sam.cmd; fi
 # Without the sed below, the prod role would trust "develop" instead of "main".
 PIPELINE_CONFIG=".aws-sam/pipeline/pipelineconfig.toml"
 
+#
+# Least privilege: SAM's default CloudFormation execution role allows
+# Action "*" on Resource "*". Instead, deploy our own role per stage
+# (pipeline/cfn-execution-role.yaml - this environment's DynamoDB tables only)
+# and hand it to bootstrap, which then skips creating the admin role and
+# scopes the pipeline role's iam:PassRole to ours.
+deploy_cfn_execution_role() {
+  local stage="$1" stack="dynamodb-sam-lab-$1-cfn-execution-role"
+  aws cloudformation deploy \
+    --region "$REGION" \
+    --stack-name "$stack" \
+    --template-file pipeline/cfn-execution-role.yaml \
+    --parameter-overrides "Environment=$stage" \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --no-fail-on-empty-changeset >&2
+  aws cloudformation describe-stacks --region "$REGION" --stack-name "$stack" \
+    --query "Stacks[0].Outputs[?OutputKey=='CloudFormationExecutionRoleArn'].OutputValue" \
+    --output text
+}
+
 bootstrap_stage() {
-  local stage="$1" branch="$2"
+  local stage="$1" branch="$2" cfn_role
+  cfn_role=$(deploy_cfn_execution_role "$stage")
+  echo "[$stage] CloudFormation execution role: $cfn_role"
   if [[ -f "$PIPELINE_CONFIG" ]]; then
     sed -i "s|^deployment_branch = .*|deployment_branch = \"$branch\"|" "$PIPELINE_CONFIG"
   fi
@@ -60,6 +86,7 @@ bootstrap_stage() {
     --github-org "$GITHUB_ORG" \
     --github-repo "$GITHUB_REPO" \
     --deployment-branch "$branch" \
+    --cloudformation-execution-role "$cfn_role" \
     --no-create-image-repository \
     --no-confirm-changeset
 }

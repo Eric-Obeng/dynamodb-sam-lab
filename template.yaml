@@ -54,8 +54,9 @@ Resources:
       DeletionProtectionEnabled: !If [IsProd, true, false]
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: !If [IsProd, true, false]
-      SSESpecification:
-        SSEEnabled: true
+      # No SSESpecification on purpose: DynamoDB always encrypts at rest, and
+      # the default AWS-owned key needs no KMS permissions on the deploy role.
+      # (SSEEnabled: true would switch to the AWS-managed KMS key instead.)
       AttributeDefinitions:
         - AttributeName: taskId
           AttributeType: S

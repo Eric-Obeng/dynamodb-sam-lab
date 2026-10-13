@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Least-privilege CloudFormation execution role for one environment of
+  dynamodb-sam-lab. Replaces the AdministratorAccess-equivalent role that
+  `sam pipeline bootstrap` creates by default. Deployed once per environment
+  by scripts/bootstrap-pipeline.sh, then passed to bootstrap via
+  --cloudformation-execution-role.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - dev
+      - prod
+
+  ProjectName:
+    Type: String
+    Default: dynamodb-sam-lab
+
+Resources:
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-${Environment}-cfn-execution
+      Description: !Sub CloudFormation execution role for the ${Environment} stack - DynamoDB tables of this environment only.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+            # Confused-deputy guard: only CloudFormation acting for this account.
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: ManageEnvironmentTables
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Everything the AWS::DynamoDB::Table resource handler calls for
+              # the properties template.yaml uses (keys, GSIs, table class,
+              # tags, deletion protection, point-in-time recovery). The
+              # wildcard also covers the tables' GSI ARNs (.../index/*).
+              - Sid: ManageTables
+                Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:UpdateContinuousBackups
+                  - dynamodb:DescribeContributorInsights
+                  - dynamodb:DescribeKinesisStreamingDestination
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:GetResourcePolicy
+                  - dynamodb:ListTagsOfResource
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-${Environment}-*
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  CloudFormationExecutionRoleArn:
+    Description: Pass to `sam pipeline bootstrap --cloudformation-execution-role`
+    Value: !GetAtt CloudFormationExecutionRole.Arn

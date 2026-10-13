@@ -16,12 +16,12 @@ flowchart LR
     subgraph DevStage["sam pipeline bootstrap --stage dev"]
       dev_role["dev pipeline execution role<br/>(OIDC, trusts develop only)"]
       dev_bucket[("dev artifacts bucket")]
-      dev_cfn_role["dev CloudFormation execution role"]
+      dev_cfn_role["dev CloudFormation execution role<br/>(DynamoDB on dev tables only)"]
     end
     subgraph ProdStage["sam pipeline bootstrap --stage prod"]
       prod_role["prod pipeline execution role<br/>(OIDC, trusts main only)"]
       prod_bucket[("prod artifacts bucket")]
-      prod_cfn_role["prod CloudFormation execution role"]
+      prod_cfn_role["prod CloudFormation execution role<br/>(DynamoDB on prod tables only)"]
     end
     dev_stack["stack dynamodb-sam-lab-dev<br/>table dynamodb-sam-lab-dev-tasks"]
     prod_stack["stack dynamodb-sam-lab-prod<br/>table dynamodb-sam-lab-prod-tasks"]
@@ -67,7 +67,7 @@ console without a second lookup.
 | `DeletionPolicy` / `UpdateReplacePolicy` | `Delete` | `Retain` |
 | Deletion protection | off | on |
 | Point-in-time recovery | off | on |
-| Encryption at rest | on (AWS owned key) | on (AWS owned key) |
+| Encryption at rest | on (DynamoDB default, AWS-owned key) | on (DynamoDB default, AWS-owned key) |
 
 ## Design decisions
 
@@ -78,6 +78,8 @@ console without a second lookup.
 | `CAPABILITY_AUTO_EXPAND`, not `CAPABILITY_IAM` | The template creates no IAM resources. `AUTO_EXPAND` is the only capability the transforms need. |
 | One self-contained `samconfig.toml` block per environment | With `--config-env`, SAM CLI ignores `[default.*]` sections. Keeping `stack_name` in `global.parameters` means every command (`deploy`, `list stack-outputs`, `delete`) reads it from one place. |
 | Bucket and role ARNs come from GitHub repo variables, not `samconfig.toml` | Each environment deploys through its own bootstrap outputs, and no account-specific values are committed. |
+| Custom least-privilege CloudFormation execution role per environment | `sam pipeline bootstrap`'s default execution role allows `Action: "*"` on `Resource: "*"`. [`pipeline/cfn-execution-role.yaml`](pipeline/cfn-execution-role.yaml) creates a role that can run only the DynamoDB actions the table needs, only on `dynamodb-sam-lab-<env>-*`, and that only CloudFormation in this account can assume. It's passed to bootstrap with `--cloudformation-execution-role`, so SAM doesn't create its admin role and the pipeline role's `iam:PassRole` is limited to ours. |
+| No `SSESpecification` on the table | DynamoDB always encrypts at rest. Leaving the property out keeps the free AWS-owned key. `SSEEnabled: true` would switch to the AWS-managed KMS key and require KMS permissions on the deploy role. Policy-as-code rules such as `DYNAMODB_TABLE_MUST_BE_ENCRYPTED` flag the missing property, but the table is still encrypted. |
 | GitHub OIDC instead of access keys | No long-lived AWS credentials are stored in GitHub. Each stage's role trusts only its own branch. |
 | `validate` job before `deploy` | A template that fails lint never reaches the step that gets AWS credentials. Only the deploy job has `id-token: write`. |
 | No `environment:` key on the deploy job | Setting one changes the OIDC subject claim to `…:environment:<name>`, which wouldn't match the branch-scoped trust policy that `sam pipeline bootstrap` creates. |
@@ -88,7 +90,8 @@ console without a second lookup.
 ```text
 template.yaml                      # SAM template: the Tasks table
 samconfig.toml                     # Per-environment config ([dev.*] / [prod.*])
-scripts/bootstrap-pipeline.sh      # One-time: sam pipeline bootstrap for dev + prod
+scripts/bootstrap-pipeline.sh      # One-time: deploy role stacks + sam pipeline bootstrap for dev + prod
+pipeline/cfn-execution-role.yaml   # Least-privilege CloudFormation execution role (one stack per env)
 .github/workflows/
   deploy-dev.yml                   # push to develop -> deploys the dev stack only
   deploy-prod.yml                  # push to main    -> deploys the prod stack only
@@ -212,7 +215,7 @@ sam build    --config-env dev
 | On-Demand billing | 5 | `BillingMode: PAY_PER_REQUEST` |
 | Non-Standard table class | 5 | `TableClass: STANDARD_INFREQUENT_ACCESS` |
 | Primary key + 2 attributes + 2 GSIs | 20 | `taskId`; `title`, `priority` (+4 more); `StatusIndex`, `AssigneeIndex` |
-| SAM pipeline configured | 10 | [`scripts/bootstrap-pipeline.sh`](scripts/bootstrap-pipeline.sh), `.aws-sam/pipeline/pipelineconfig.toml` |
+| SAM pipeline configured | 10 | [`scripts/bootstrap-pipeline.sh`](scripts/bootstrap-pipeline.sh), [`pipelineconfig.toml`](.aws-sam/pipeline/pipelineconfig.toml), least-privilege roles in [`pipeline/cfn-execution-role.yaml`](pipeline/cfn-execution-role.yaml) |
 | GitHub Actions workflow functioning | 10 | [Actions tab](https://github.com/Eric-Obeng/dynamodb-sam-lab/actions) |
 | Multi-environment (dev/prod) | 10 | `[dev.*]` / `[prod.*]` in [`samconfig.toml`](samconfig.toml), one stack per environment |
 | Console CRUD | 10 | [Verification](#verification-console-crud) |
@@ -232,4 +235,7 @@ sam delete --config-env prod --no-prompts
 # pipeline resources (empty the artifacts buckets first):
 aws cloudformation delete-stack --stack-name aws-sam-cli-managed-dev-pipeline-resources
 aws cloudformation delete-stack --stack-name aws-sam-cli-managed-prod-pipeline-resources
+# least-privilege role stacks (after the stacks above are gone):
+aws cloudformation delete-stack --stack-name dynamodb-sam-lab-dev-cfn-execution-role
+aws cloudformation delete-stack --stack-name dynamodb-sam-lab-prod-cfn-execution-role
 ```
