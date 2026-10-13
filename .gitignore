@@ -7,3 +7,6 @@ LAB_BRIEF.md
 # pipeline bootstrap writes here and is meant to be committed.
 .aws-sam/*
 !.aws-sam/pipeline/
+
+# local bootstrap output
+bootstrap.log

@@ -1,0 +1,24 @@
+version = 0.1
+
+[default.pipeline_bootstrap.parameters]
+oidc_provider_url = "https://token.actions.githubusercontent.com"
+oidc_client_id = "sts.amazonaws.com"
+github_org = "Eric-Obeng@61484602"
+github_repo = "dynamodb-sam-lab@1415454330"
+deployment_branch = "main"
+oidc_provider = "github-actions"
+permissions_provider = "OpenID Connect (OIDC)"
+
+[dev.pipeline_bootstrap.parameters]
+pipeline_execution_role = "arn:aws:iam::288761749193:role/aws-sam-cli-managed-dev-pipel-PipelineExecutionRole-9AYmpes3Rbbg"
+cloudformation_execution_role = "arn:aws:iam::288761749193:role/dynamodb-sam-lab-dev-cfn-execution"
+artifacts_bucket = "aws-sam-cli-managed-dev-pipeline-r-artifactsbucket-1iphy7hqzckx"
+image_repository = ""
+region = "eu-central-1"
+
+[prod.pipeline_bootstrap.parameters]
+pipeline_execution_role = "arn:aws:iam::288761749193:role/aws-sam-cli-managed-prod-pipe-PipelineExecutionRole-nVtMtJoSzbZg"
+cloudformation_execution_role = "arn:aws:iam::288761749193:role/dynamodb-sam-lab-prod-cfn-execution"
+artifacts_bucket = "aws-sam-cli-managed-prod-pipeline--artifactsbucket-sl5emhad5awe"
+image_repository = ""
+region = "eu-central-1"
