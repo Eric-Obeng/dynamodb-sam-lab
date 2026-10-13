@@ -8,18 +8,18 @@ by SAM Pipelines and GitHub Actions, in `eu-central-1`.
 ```mermaid
 flowchart LR
   subgraph GitHub["GitHub: Eric-Obeng/dynamodb-sam-lab"]
-    dev_branch["develop branch"] --> dev_wf["deploy-dev.yml<br/>validate → deploy"]
-    main_branch["main branch"] --> prod_wf["deploy-prod.yml<br/>validate → deploy"]
+    dev_branch["develop branch"] --> dev_wf["deploy-dev.yml<br/>validate → deploy<br/>(GitHub env: dev)"]
+    main_branch["main branch"] --> prod_wf["deploy-prod.yml<br/>validate → approval → deploy<br/>(GitHub env: prod)"]
   end
 
   subgraph AWS["AWS account · eu-central-1"]
     subgraph DevStage["sam pipeline bootstrap --stage dev"]
-      dev_role["dev pipeline execution role<br/>(OIDC, trusts develop only)"]
+      dev_role["dev pipeline execution role<br/>(OIDC, trusts env dev only)"]
       dev_bucket[("dev artifacts bucket")]
       dev_cfn_role["dev CloudFormation execution role<br/>(DynamoDB on dev tables only)"]
     end
     subgraph ProdStage["sam pipeline bootstrap --stage prod"]
-      prod_role["prod pipeline execution role<br/>(OIDC, trusts main only)"]
+      prod_role["prod pipeline execution role<br/>(OIDC, trusts env prod only)"]
       prod_bucket[("prod artifacts bucket")]
       prod_cfn_role["prod CloudFormation execution role<br/>(DynamoDB on prod tables only)"]
     end
@@ -80,9 +80,9 @@ console without a second lookup.
 | Bucket and role ARNs come from GitHub repo variables, not `samconfig.toml` | Each environment deploys through its own bootstrap outputs, and no account-specific values are committed. |
 | Custom least-privilege CloudFormation execution role per environment | `sam pipeline bootstrap`'s default execution role allows `Action: "*"` on `Resource: "*"`. [`pipeline/cfn-execution-role.yaml`](pipeline/cfn-execution-role.yaml) creates a role that can run only the DynamoDB actions the table needs, only on `dynamodb-sam-lab-<env>-*`, and that only CloudFormation in this account can assume. It's passed to bootstrap with `--cloudformation-execution-role`, so SAM doesn't create its admin role and the pipeline role's `iam:PassRole` is limited to ours. |
 | No `SSESpecification` on the table | DynamoDB always encrypts at rest. Leaving the property out keeps the free AWS-owned key. `SSEEnabled: true` would switch to the AWS-managed KMS key and require KMS permissions on the deploy role. Policy-as-code rules such as `DYNAMODB_TABLE_MUST_BE_ENCRYPTED` flag the missing property, but the table is still encrypted. |
-| GitHub OIDC instead of access keys | No long-lived AWS credentials are stored in GitHub. Each stage's role trusts only its own branch. |
+| GitHub OIDC instead of access keys | No long-lived AWS credentials are stored in GitHub, so there are no GitHub secrets at all. Role ARNs and bucket names are plain variables: they're identifiers, not credentials. |
 | `validate` job before `deploy` | A template that fails lint never reaches the step that gets AWS credentials. Only the deploy job has `id-token: write`. |
-| No `environment:` key on the deploy job | Setting one changes the OIDC subject claim to `…:environment:<name>`, which wouldn't match the branch-scoped trust policy that `sam pipeline bootstrap` creates. |
+| Deploy jobs run in GitHub environments `dev` / `prod` | Each environment holds only its own variables. `dev` accepts deployments only from `develop`, and `prod` only from `main` with a required reviewer's approval. The OIDC subject becomes `…:environment:<env>`, and each pipeline role trusts only its own environment. GitHub enforces the branch policy and the approval before issuing the token, so `develop` still can't reach prod. |
 | Branch protection on `main` | Prod deploys only from a merged PR whose `validate-pr` check passed. No direct pushes, no force pushes or deletion, and admins are included. |
 | `validate-pr.yml` on every PR | Lints and builds the template with both environment configs, and lints the role template, before merge. It needs no AWS access. |
 | Actions pinned to commit SHAs, updated by Dependabot | A moved or compromised tag can't change the code that runs with AWS credentials. Dependabot opens PRs (to `develop`) to bump the pinned SHAs. |
@@ -104,10 +104,10 @@ docs/sam-pipeline-init/            # Unmodified output of `sam pipeline init` (n
 
 ## Pipeline design
 
-| Environment | Branch    | Workflow          | Stack                   | Artifacts bucket            |
-|-------------|-----------|-------------------|-------------------------|-----------------------------|
-| dev         | `develop` | `deploy-dev.yml`  | `dynamodb-sam-lab-dev`  | bucket from `--stage dev`   |
-| prod        | `main`    | `deploy-prod.yml` | `dynamodb-sam-lab-prod` | bucket from `--stage prod`  |
+| Environment | Branch | Workflow | GitHub environment | Stack | Artifacts bucket |
+| --- | --- | --- | --- | --- | --- |
+| dev | `develop` | `deploy-dev.yml` | `dev` (branch `develop` only) | `dynamodb-sam-lab-dev` | bucket from `--stage dev` |
+| prod | `main` | `deploy-prod.yml` | `prod` (branch `main` only, required reviewer) | `dynamodb-sam-lab-prod` | bucket from `--stage prod` |
 
 - `sam pipeline bootstrap` runs once per stage. Each stage gets its own artifacts bucket,
   pipeline execution role, and CloudFormation execution role.
@@ -128,7 +128,7 @@ workflows like this:
 | Generated (`pipeline.yaml`) | Split into |
 | --- | --- |
 | One workflow on `main` that deploys testing, then prod | `deploy-dev.yml` on `develop`, `deploy-prod.yml` on `main` |
-| `env:` block with both stages' role ARNs and buckets | `DEV_*` variables used only in `deploy-dev.yml`, `PROD_*` only in `deploy-prod.yml` |
+| `env:` block with both stages' role ARNs and buckets | Variables in the `dev` and `prod` GitHub environments. Each deploy job can only see its own. |
 | `test` job (empty placeholder) | `validate` job: `sam validate --lint`, with no AWS credentials |
 | `build-and-package` + `deploy-testing` | `deploy-dev.yml` → `deploy` job |
 | `build-and-package` + `deploy-prod` | `deploy-prod.yml` → `deploy` job |
@@ -137,8 +137,8 @@ workflows like this:
 The generated file also couldn't deploy this project as-is, which is another reason for the
 split:
 
-- **Wrong branch for the dev role.** Its testing deploy runs from `main`, but the dev role
-  trusts only `develop`, so `AssumeRoleWithWebIdentity` would be denied.
+- **Token doesn't match the roles' trust.** Its jobs run from `main` with no GitHub environment,
+  but each role trusts only `…:environment:<env>`, so `AssumeRoleWithWebIdentity` would be denied.
 - **Wrong capability.** It passes `CAPABILITY_IAM`, but the template's transforms need
   `CAPABILITY_AUTO_EXPAND`.
 - **Missing parameter.** It never sets `Environment`, which has no default. The split workflows
@@ -157,31 +157,31 @@ the GitHub CLI, and admin credentials for the target account.
    ./scripts/bootstrap-pipeline.sh
    ```
 
-2. **One-time:** from `.aws-sam/pipeline/pipelineconfig.toml`, set these GitHub repo
-   **variables** (Settings → Secrets and variables → Actions → Variables):
-
-   | Variable                                        | Source (stage `dev` / `prod`)   |
-   |-------------------------------------------------|---------------------------------|
-   | `DEV_REGION` / `PROD_REGION`                    | `region`                        |
-   | `DEV_PIPELINE_EXECUTION_ROLE` / `PROD_…`        | `pipeline_execution_role`       |
-   | `DEV_CLOUDFORMATION_EXECUTION_ROLE` / `PROD_…`  | `cloudformation_execution_role` |
-   | `DEV_ARTIFACTS_BUCKET` / `PROD_…`               | `artifacts_bucket`              |
-
-   Or set them from the file with the GitHub CLI:
+2. **One-time:** create the GitHub environments and their variables from
+   `.aws-sam/pipeline/pipelineconfig.toml`:
 
    ```bash
+   R=repos/Eric-Obeng/dynamodb-sam-lab
+   # dev: deployments from develop only
+   echo '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' \
+     | gh api -X PUT $R/environments/dev --input -
+   gh api -X POST $R/environments/dev/deployment-branch-policies -f name=develop -f type=branch
+   # prod: deployments from main only, after a reviewer approves
+   echo '{"reviewers":[{"type":"User","id":61484602}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' \
+     | gh api -X PUT $R/environments/prod --input -
+   gh api -X POST $R/environments/prod/deployment-branch-policies -f name=main -f type=branch
+
    CFG=.aws-sam/pipeline/pipelineconfig.toml
    get() { sed -n "/^\[$1\.pipeline_bootstrap/,/^\[/p" $CFG | grep "^$2 =" | cut -d'"' -f2; }
    for s in dev prod; do
-     P=$(echo $s | tr a-z A-Z)
-     gh variable set ${P}_REGION                        --body "$(get $s region)"
-     gh variable set ${P}_PIPELINE_EXECUTION_ROLE       --body "$(get $s pipeline_execution_role)"
-     gh variable set ${P}_CLOUDFORMATION_EXECUTION_ROLE --body "$(get $s cloudformation_execution_role)"
-     gh variable set ${P}_ARTIFACTS_BUCKET              --body "$(get $s artifacts_bucket)"
+     gh variable set REGION                        --env $s --body "$(get $s region)"
+     gh variable set PIPELINE_EXECUTION_ROLE       --env $s --body "$(get $s pipeline_execution_role)"
+     gh variable set CLOUDFORMATION_EXECUTION_ROLE --env $s --body "$(get $s cloudformation_execution_role)"
+     gh variable set ARTIFACTS_BUCKET              --env $s --body "$(get $s artifacts_bucket)"
    done
    ```
 
-3. Check that each stage's role trusts only its own branch:
+3. Check that each stage's role trusts only its own GitHub environment:
 
    ```bash
    for s in dev prod; do
@@ -192,8 +192,8 @@ the GitHub CLI, and admin credentials for the target account.
      echo "== $s: $(aws iam get-role --role-name "$ROLE" \
        --query 'Role.AssumeRolePolicyDocument.Statement[0].Condition.*."token.actions.githubusercontent.com:sub"' --output text)"
    done
-   # == dev: repo:Eric-Obeng@61484602/dynamodb-sam-lab@1415454330:ref:refs/heads/develop
-   # == prod: repo:Eric-Obeng@61484602/dynamodb-sam-lab@1415454330:ref:refs/heads/main
+   # == dev: repo:Eric-Obeng@61484602/dynamodb-sam-lab@1415454330:environment:dev
+   # == prod: repo:Eric-Obeng@61484602/dynamodb-sam-lab@1415454330:environment:prod
    ```
 
 4. Commit `.aws-sam/pipeline/pipelineconfig.toml` and push to `develop`. That deploys dev.
@@ -253,7 +253,7 @@ sam build    --config-env dev
 | GitHub Actions workflow functioning | 10 | [Actions tab](https://github.com/Eric-Obeng/dynamodb-sam-lab/actions) |
 | Multi-environment (dev/prod) | 10 | `[dev.*]` / `[prod.*]` in [`samconfig.toml`](samconfig.toml), one stack per environment |
 | Console CRUD | 10 | [Verification](#verification-console-crud) |
-| **Bonus:** environment-scoped artifact buckets | 10 | Separate bucket per `--stage`, passed as `DEV_ARTIFACTS_BUCKET` / `PROD_ARTIFACTS_BUCKET` |
+| **Bonus:** environment-scoped artifact buckets | 10 | Separate bucket per `--stage`, set as `ARTIFACTS_BUCKET` in the `dev` and `prod` GitHub environments |
 | **Bonus:** separate dev and prod pipelines | 10 | Generated [`pipeline.generated.yaml`](docs/sam-pipeline-init/pipeline.generated.yaml) split into [`deploy-dev.yml`](.github/workflows/deploy-dev.yml) and [`deploy-prod.yml`](.github/workflows/deploy-prod.yml); see [the mapping](#from-sam-pipeline-init-to-two-pipelines) |
 
 ## Teardown and cost
