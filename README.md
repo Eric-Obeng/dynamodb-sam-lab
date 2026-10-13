@@ -83,6 +83,9 @@ console without a second lookup.
 | GitHub OIDC instead of access keys | No long-lived AWS credentials are stored in GitHub. Each stage's role trusts only its own branch. |
 | `validate` job before `deploy` | A template that fails lint never reaches the step that gets AWS credentials. Only the deploy job has `id-token: write`. |
 | No `environment:` key on the deploy job | Setting one changes the OIDC subject claim to `…:environment:<name>`, which wouldn't match the branch-scoped trust policy that `sam pipeline bootstrap` creates. |
+| Branch protection on `main` | Prod deploys only from a merged PR whose `validate-pr` check passed. No direct pushes, no force pushes or deletion, and admins are included. |
+| `validate-pr.yml` on every PR | Lints and builds the template with both environment configs, and lints the role template, before merge. It needs no AWS access. |
+| Actions pinned to commit SHAs, updated by Dependabot | A moved or compromised tag can't change the code that runs with AWS credentials. Dependabot opens PRs (to `develop`) to bump the pinned SHAs. |
 | `concurrency` with `cancel-in-progress: false` | Deployments queue rather than cancel, so a CloudFormation update is never interrupted mid-flight. |
 
 ## Repo layout
