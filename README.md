@@ -123,7 +123,7 @@ It's kept unmodified outside `.github/workflows/` so it never runs. It was split
 workflows like this:
 
 | Generated (`pipeline.yaml`) | Split into |
-|---|---|
+| --- | --- |
 | One workflow on `main` that deploys testing, then prod | `deploy-dev.yml` on `develop`, `deploy-prod.yml` on `main` |
 | `env:` block with both stages' role ARNs and buckets | `DEV_*` variables used only in `deploy-dev.yml`, `PROD_*` only in `deploy-prod.yml` |
 | `test` job (empty placeholder) | `validate` job: `sam validate --lint`, with no AWS credentials |
