@@ -172,10 +172,11 @@ Found with SAM CLI 1.168.0:
 
 - **`--cicd-provider` is required with `--oidc-provider`.** Without it, SAM resets the OIDC
   provider to nothing and fails with `Missing required parameter '--oidc-provider'`.
-- **A saved `deployment_branch` overrides the command line.** The first stage's branch is saved
-  under `[default]` in `pipelineconfig.toml`, and SAM reuses it for the next stage even when
-  `--deployment-branch` is passed. Without a fix, the prod role would trust `develop`. The script
-  resets the saved branch before each stage, and step 3 above checks the result.
+- **Saved values override the command line.** SAM saves `deployment_branch`, `github_org` and
+  `github_repo` under `[default]` in `pipelineconfig.toml`, and on later runs uses them even when
+  the matching flags are passed. Without a fix, the prod role would trust `develop`, and a re-run
+  would lose the immutable-subject IDs (see the next point). The script resets all three before
+  each stage, and step 3 above checks the result.
 - **SAM doesn't know GitHub's immutable OIDC subjects.** This repo's tokens carry
   `repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:…`, but SAM writes a name-only trust
   (`repo:<owner>/<repo>:ref:…`), so `AssumeRoleWithWebIdentity` is denied. The script reads

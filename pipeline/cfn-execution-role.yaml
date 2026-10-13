@@ -60,6 +60,14 @@ Resources:
                   - dynamodb:TagResource
                   - dynamodb:UntagResource
                 Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}-${Environment}-*
+              # template.yaml uses two AWS-hosted transforms; CloudFormation
+              # checks the execution role may invoke each one.
+              - Sid: UseTemplateTransforms
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource:
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/LanguageExtensions
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
       Tags:
         - Key: Project
           Value: !Ref ProjectName

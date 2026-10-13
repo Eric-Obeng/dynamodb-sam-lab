@@ -42,9 +42,11 @@ if command -v sam >/dev/null 2>&1; then SAM=sam; else SAM=sam.cmd; fi
 # SAM CLI resets the OIDC provider to None and fails with
 # "Missing required parameter '--oidc-provider'".
 #
-# SAM CLI also saves deployment_branch into [default] of pipelineconfig.toml
-# and, on the next run, lets that saved value OVERRIDE --deployment-branch.
-# Without the sed below, the prod role would trust "develop" instead of "main".
+# SAM CLI also saves deployment_branch, github_org and github_repo into
+# [default] of pipelineconfig.toml and, on the next run, lets those saved
+# values OVERRIDE the matching flags. Without the sed below, the prod role
+# would trust "develop" instead of "main", and a re-run would drop the
+# immutable-subject IDs from the trust policy.
 PIPELINE_CONFIG=".aws-sam/pipeline/pipelineconfig.toml"
 
 #
@@ -72,7 +74,9 @@ bootstrap_stage() {
   cfn_role=$(deploy_cfn_execution_role "$stage")
   echo "[$stage] CloudFormation execution role: $cfn_role"
   if [[ -f "$PIPELINE_CONFIG" ]]; then
-    sed -i "s|^deployment_branch = .*|deployment_branch = \"$branch\"|" "$PIPELINE_CONFIG"
+    sed -i -e "s|^deployment_branch = .*|deployment_branch = \"$branch\"|" \
+           -e "s|^github_org = .*|github_org = \"$GITHUB_ORG\"|" \
+           -e "s|^github_repo = .*|github_repo = \"$GITHUB_REPO\"|" "$PIPELINE_CONFIG"
   fi
   "$SAM" pipeline bootstrap \
     --no-interactive \
