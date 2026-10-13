@@ -96,6 +96,7 @@ pipeline/cfn-execution-role.yaml   # Least-privilege CloudFormation execution ro
   deploy-dev.yml                   # push to develop -> deploys the dev stack only
   deploy-prod.yml                  # push to main    -> deploys the prod stack only
 docs/sample-items.json             # Sample items for console CRUD testing
+docs/sam-pipeline-init/            # Unmodified output of `sam pipeline init` (not run; kept as evidence)
 ```
 
 ## Pipeline design
@@ -112,6 +113,35 @@ docs/sample-items.json             # Sample items for console CRUD testing
   only its own stage's variables.
 - Workflows trigger only when `template.yaml`, `samconfig.toml`, or their own workflow file
   changes. Both can also be run by hand (`workflow_dispatch`).
+
+### From `sam pipeline init` to two pipelines
+
+`sam pipeline init` (GitHub Actions, two-stage template, with the `dev` and `prod` stages from
+bootstrap) generated
+[`docs/sam-pipeline-init/pipeline.generated.yaml`](docs/sam-pipeline-init/pipeline.generated.yaml).
+It's kept unmodified outside `.github/workflows/` so it never runs. It was split into the two
+workflows like this:
+
+| Generated (`pipeline.yaml`) | Split into |
+|---|---|
+| One workflow on `main` that deploys testing, then prod | `deploy-dev.yml` on `develop`, `deploy-prod.yml` on `main` |
+| `env:` block with both stages' role ARNs and buckets | `DEV_*` variables used only in `deploy-dev.yml`, `PROD_*` only in `deploy-prod.yml` |
+| `test` job (empty placeholder) | `validate` job: `sam validate --lint`, with no AWS credentials |
+| `build-and-package` + `deploy-testing` | `deploy-dev.yml` → `deploy` job |
+| `build-and-package` + `deploy-prod` | `deploy-prod.yml` → `deploy` job |
+| `build-and-deploy-feature` / `delete-feature` | Dropped. No per-branch stacks for a single-table lab. |
+
+The generated file also couldn't deploy this project as-is, which is another reason for the
+split:
+
+- **Wrong branch for the dev role.** Its testing deploy runs from `main`, but the dev role
+  trusts only `develop`, so `AssumeRoleWithWebIdentity` would be denied.
+- **Wrong capability.** It passes `CAPABILITY_IAM`, but the template's transforms need
+  `CAPABILITY_AUTO_EXPAND`.
+- **Missing parameter.** It never sets `Environment`, which has no default. The split workflows
+  take it from `samconfig.toml` via `--config-env`.
+- **Both environments' credentials in one run.** One run from `main` assumes the dev and prod
+  roles. Each split workflow can only reach its own environment.
 
 ## Setup
 
@@ -221,7 +251,7 @@ sam build    --config-env dev
 | Multi-environment (dev/prod) | 10 | `[dev.*]` / `[prod.*]` in [`samconfig.toml`](samconfig.toml), one stack per environment |
 | Console CRUD | 10 | [Verification](#verification-console-crud) |
 | **Bonus:** environment-scoped artifact buckets | 10 | Separate bucket per `--stage`, passed as `DEV_ARTIFACTS_BUCKET` / `PROD_ARTIFACTS_BUCKET` |
-| **Bonus:** separate dev and prod pipelines | 10 | [`deploy-dev.yml`](.github/workflows/deploy-dev.yml), [`deploy-prod.yml`](.github/workflows/deploy-prod.yml) |
+| **Bonus:** separate dev and prod pipelines | 10 | Generated [`pipeline.generated.yaml`](docs/sam-pipeline-init/pipeline.generated.yaml) split into [`deploy-dev.yml`](.github/workflows/deploy-dev.yml) and [`deploy-prod.yml`](.github/workflows/deploy-prod.yml); see [the mapping](#from-sam-pipeline-init-to-two-pipelines) |
 
 ## Teardown and cost
 
