@@ -95,8 +95,32 @@ bootstrap_stage() {
     --no-confirm-changeset
 }
 
+# The deploy jobs run in GitHub environments (dev / prod), so GitHub's OIDC
+# sub claim is "repo:<owner>/<repo>:environment:<stage>", not the branch form
+# SAM writes. Overwrite SubjectClaim on the bootstrap stack after SAM is done.
+# Branch restriction moves to the environments' deployment branch policies
+# (dev <- develop, prod <- main), which GitHub enforces before issuing a token.
+set_environment_subject() {
+  local stage="$1" stack="aws-sam-cli-managed-$1-pipeline-resources" keep out
+  local claim="repo:$GITHUB_ORG/$GITHUB_REPO:environment:$stage"
+  keep=$(aws cloudformation describe-stacks --region "$REGION" --stack-name "$stack" \
+    --query 'Stacks[0].Parameters[?ParameterKey!=`SubjectClaim`].ParameterKey' --output text \
+    | tr '\t' '\n' | sed 's/.*/ParameterKey=&,UsePreviousValue=true/' | tr '\n' ' ')
+  # shellcheck disable=SC2086
+  if out=$(aws cloudformation update-stack --region "$REGION" --stack-name "$stack" \
+      --use-previous-template --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+      --parameters "ParameterKey=SubjectClaim,ParameterValue=$claim" $keep 2>&1); then
+    aws cloudformation wait stack-update-complete --region "$REGION" --stack-name "$stack"
+  elif [[ "$out" != *"No updates are to be performed"* ]]; then
+    echo "$out" >&2; return 1
+  fi
+  echo "[$stage] pipeline role trusts: $claim"
+}
+
 bootstrap_stage dev develop
+set_environment_subject dev
 bootstrap_stage prod main
+set_environment_subject prod
 
 echo
 echo "Done. Copy these into GitHub repo variables (Settings > Secrets and variables > Actions > Variables):"

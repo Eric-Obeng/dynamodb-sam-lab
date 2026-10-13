@@ -39,13 +39,15 @@ jobs:
       - name: Validate and lint template
         run: sam validate --config-env "$SAM_CONFIG_ENV"
 
-  # NOTE: no `environment:` key on this job on purpose - setting one changes
-  # the OIDC sub claim to "repo:<org>/<repo>:environment:<name>", which would
-  # no longer match the branch-scoped trust policy sam pipeline bootstrap
-  # creates ("repo:<org>/<repo>:ref:refs/heads/develop").
+  # Runs in the GitHub `dev` environment, which only accepts deployments
+  # from `develop` and holds this environment's variables (no other
+  # environment's values are visible here).
+  # The OIDC sub claim becomes "repo:<owner>/<repo>:environment:dev", which is
+  # what the dev pipeline execution role trusts.
   deploy:
     needs: validate
     runs-on: ubuntu-latest
+    environment: dev
     permissions:
       contents: read
       id-token: write
@@ -59,17 +61,17 @@ jobs:
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
-          role-to-assume: ${{ vars.DEV_PIPELINE_EXECUTION_ROLE }}
+          role-to-assume: ${{ vars.PIPELINE_EXECUTION_ROLE }}
           role-session-name: dev-deployment-${{ github.run_id }}
-          aws-region: ${{ vars.DEV_REGION }}
+          aws-region: ${{ vars.REGION }}
 
       - name: Build
         run: sam build --config-env "$SAM_CONFIG_ENV"
 
       - name: Deploy
         env:
-          ARTIFACTS_BUCKET: ${{ vars.DEV_ARTIFACTS_BUCKET }}
-          CLOUDFORMATION_EXECUTION_ROLE: ${{ vars.DEV_CLOUDFORMATION_EXECUTION_ROLE }}
+          ARTIFACTS_BUCKET: ${{ vars.ARTIFACTS_BUCKET }}
+          CLOUDFORMATION_EXECUTION_ROLE: ${{ vars.CLOUDFORMATION_EXECUTION_ROLE }}
         run: |
           sam deploy \
             --config-env "$SAM_CONFIG_ENV" \
